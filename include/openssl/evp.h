@@ -649,7 +649,7 @@ __owur int EVP_SealInit(EVP_CIPHER_CTX *ctx, const EVP_CIPHER *type,
 __owur int EVP_SealFinal(EVP_CIPHER_CTX *ctx, unsigned char *out, int *outl);
 # endif
 size_t EVP_VRFProve(EVP_PKEY *key, EVP_MD *md, const unsigned char *input, size_t len, unsigned char **hash, unsigned char **proof);
-size_t EVP_VRFVerify(const EVP_PKEY *pkey, EVP_MD *md, const unsigned char *hash, const unsigned char *proof);
+int EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isize, const unsigned char *hash, size_t hsize, const unsigned char *proof);
 EVP_ENCODE_CTX *EVP_ENCODE_CTX_new(void);
 void EVP_ENCODE_CTX_free(EVP_ENCODE_CTX *ctx);
 int EVP_ENCODE_CTX_copy(EVP_ENCODE_CTX *dctx, EVP_ENCODE_CTX *sctx);
