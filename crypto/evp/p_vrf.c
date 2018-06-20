@@ -77,7 +77,7 @@ BIGNUM *hash_to_scalar(const unsigned char *data, size_t len)
 	return ret;
 }
 
-EC_POINT *hash_to_point(const EC_GROUP *g, unsigned char *data, size_t len)
+EC_POINT *hash_to_point(const EC_GROUP *g, const unsigned char *data, size_t len)
 {
 	unsigned char is_on_curve = 0;
 	
@@ -144,9 +144,9 @@ EVP_VRFProve(EVP_PKEY *key, EVP_MD *md, const unsigned char *input, size_t len, 
 	size_t ret = 0;
 	DH *dh_keypair = EVP_PKEY_get1_DH(key);
 	EC_KEY *ec_keypair = EVP_PKEY_get1_EC_KEY(key);
+	BN_CTX *bnctx = BN_CTX_new();
 	if(dh_keypair)
 	{
-		BN_CTX *bnctx = BN_CTX_new();
 		const BIGNUM *privkey = BN_new();
 		const BIGNUM *pubkey = BN_new();
 		DH_get0_key(dh_keypair, &pubkey, &privkey);
@@ -216,7 +216,7 @@ EVP_VRFProve(EVP_PKEY *key, EVP_MD *md, const unsigned char *input, size_t len, 
 		BIGNUM *cx = BN_new();
 		BN_mul(cx, c, privkey, bnctx);
 		BN_sub(s, k, cx);
-		
+		BN_mod(s, s, p, bnctx);
 		unsigned char *gammabuf = OPENSSL_malloc(BN_num_bytes(gamma));
 		unsigned char *cbuf = OPENSSL_malloc(BN_num_bytes(c));
 		unsigned char *sbuf = OPENSSL_malloc(BN_num_bytes(s));
@@ -265,6 +265,104 @@ err_paramlen:
 	}
 	else if(ec_keypair)
 	{
+		const EC_GROUP *curve = EC_KEY_get0_group(ec_keypair);
+		const EC_POINT *g = EC_GROUP_get0_generator(curve);
+		BIGNUM *p = BN_new();
+		EC_GROUP_get_curve_GFp(curve, p, 0, 0, bnctx);		
+		const BIGNUM *privkey = EC_KEY_get0_private_key(ec_keypair);
+		const EC_POINT *pubkey = EC_KEY_get0_public_key(ec_keypair);
+		EC_POINT *h = hash_to_point(curve, input, len);
+		EC_POINT *gamma = EC_POINT_new(curve);
+		
+		EC_POINT_mul(curve, gamma, 0, g, privkey, bnctx);
+		BIGNUM *k = BN_new();
+		BN_rand_range(k, p);
+		EVP_MD_CTX *md_ctx = EVP_MD_CTX_create();
+		EVP_DigestInit_ex(md_ctx, md, 0);
+		unsigned char *gbuf;
+		unsigned char *hbuf;
+		unsigned char *gxbuf;
+		unsigned char *hxbuf; size_t hxbuf_len;
+		unsigned char *gkbuf;
+		unsigned char *hkbuf;
+		unsigned char *hi;
+		size_t hi_len;
+		{
+			EC_POINT *gk = EC_POINT_new(curve);
+			EC_POINT *hk = EC_POINT_new(curve);
+
+			EC_POINT_mul(curve, gk, 0, g, k, bnctx);
+			EC_POINT_mul(curve, gk, 0, h, k, bnctx);
+
+			size_t gbuf_len = EC_POINT_point2buf(curve, g, 
+				POINT_CONVERSION_UNCOMPRESSED, &gbuf, bnctx);
+
+			size_t hbuf_len = EC_POINT_point2buf(curve, h,
+				POINT_CONVERSION_UNCOMPRESSED, &hbuf, bnctx);
+			size_t gxbuf_len = EC_POINT_point2buf(curve, pubkey,
+				POINT_CONVERSION_UNCOMPRESSED, &gxbuf, bnctx);
+			hxbuf_len = EC_POINT_point2buf(curve, gamma,
+				POINT_CONVERSION_UNCOMPRESSED, &hxbuf, bnctx);
+			size_t gkbuf_len = EC_POINT_point2buf(curve, gk,
+				POINT_CONVERSION_UNCOMPRESSED, &gkbuf, bnctx);
+			size_t hkbuf_len = EC_POINT_point2buf(curve, hk,
+				POINT_CONVERSION_UNCOMPRESSED, &hkbuf, bnctx);
+	
+		 	hi_len = bufcat(&hi, 6, gbuf, gbuf_len,
+									hbuf, hbuf_len,
+									gxbuf, gxbuf_len,
+								    hxbuf, hxbuf_len,
+									gkbuf, gkbuf_len,
+									hkbuf, hkbuf_len);
+			EC_POINT_clear_free(gk);
+			EC_POINT_clear_free(hk);
+			OPENSSL_free(gbuf);
+			OPENSSL_free(hbuf);
+			OPENSSL_free(gxbuf);
+			OPENSSL_free(gkbuf);
+			OPENSSL_free(hkbuf);
+		}
+		EVP_DigestUpdate(md_ctx, hi, hi_len);
+		unsigned char *chash = OPENSSL_malloc(EVP_MD_size(md));
+		unsigned int clen;
+		EVP_DigestFinal_ex(md_ctx, chash, &clen);
+		BIGNUM *c = BN_bin2bn(chash, clen, 0);
+		BIGNUM *s = BN_new();
+
+		BIGNUM *cx = BN_new();
+		BN_mul(cx, c, privkey, bnctx);
+		BN_sub(s, k, cx);
+		BN_mod(s, s, p, 0);
+		unsigned char *cbuf = OPENSSL_malloc(BN_num_bytes(c));
+		unsigned char *sbuf = OPENSSL_malloc(BN_num_bytes(s));
+		
+		BN_bn2bin(c, cbuf);
+		BN_bn2bin(s, sbuf);
+		
+		*hash = OPENSSL_realloc(hxbuf, 256);
+		
+		*proof = OPENSSL_malloc(hxbuf_len + BN_num_bytes(c) + BN_num_bytes(s) + 3*(sizeof(int)));
+		int nb = (int)hxbuf_len;
+		memcpy(*proof, &nb, sizeof(int));
+		memcpy(*proof+sizeof(int), hxbuf, nb);
+	
+		nb = BN_num_bytes(c);
+		memcpy(*proof+hxbuf_len+sizeof(int), &nb, sizeof(int));
+		memcpy(*proof+hxbuf_len+sizeof(int)*2, cbuf, nb);
+	
+
+		nb = BN_num_bytes(s);
+		memcpy(*proof+hxbuf_len+BN_num_bytes(c)+sizeof(int)*2, &nb, sizeof(int));
+		memcpy(*proof+hxbuf_len+BN_num_bytes(c)+sizeof(int)*3, sbuf, nb);
+
+		ret = hxbuf_len + BN_num_bytes(s) + BN_num_bytes(c);
+
+		
+		
+		BN_clear_free(k);
+		EC_POINT_free(gamma);
+		EC_POINT_free(h);
+		BN_free(p);
 		return 0; // TODO
 	}
 	return ret;
@@ -276,9 +374,9 @@ EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isi
 	size_t ret = 1;
 	DH *dh_keypair = EVP_PKEY_get1_DH(pkey);
 	EC_KEY *ec_keypair = EVP_PKEY_get1_EC_KEY(pkey);
+	BN_CTX *bnctx = BN_CTX_new();
 	if(dh_keypair)
 	{
-		BN_CTX *bnctx = BN_CTX_new();
 		const BIGNUM *privkey = BN_new(); // will remain 0, not used
 		const BIGNUM *pubkey = BN_new();
 		DH_get0_key(dh_keypair, &pubkey, &privkey);
@@ -343,16 +441,16 @@ EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isi
 			t[1] = BN_new();
 
 			BIGNUM *gk = BN_new();
-			BN_mod_exp(t[0], pubkey, cbn, p, 0);
-			BN_mod_exp(t[1], g, sbn, p, 0);
-			BN_mod_mul(gk, t[0], t[1], p, 0);
+			BN_mod_exp(t[0], pubkey, cbn, p, bnctx);
+			BN_mod_exp(t[1], g, sbn, p, bnctx);
+			BN_mod_mul(gk, t[0], t[1], p, bnctx);
 			gkbuf = OPENSSL_malloc(BN_num_bytes(gk));
 			BN_bn2bin(gk, gkbuf);
 			
 			BIGNUM *hk = BN_new();
-			BN_mod_exp(t[0], hx, cbn, p, 0);
-			BN_mod_exp(t[1], h, sbn, p, 0);
-			BN_mod_mul(hk, t[0], t[1], p, 0);
+			BN_mod_exp(t[0], hx, cbn, p, bnctx);
+			BN_mod_exp(t[1], h, sbn, p, bnctx);
+			BN_mod_mul(hk, t[0], t[1], p, bnctx);
 			hkbuf = OPENSSL_malloc(BN_num_bytes(hk));
 			BN_bn2bin(hk, hkbuf);			
 		 	hi_len = bufcat(&hi, 6, gbuf, BN_num_bytes(g),
@@ -367,7 +465,12 @@ EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isi
 			BN_free(cbn);
 			BN_free(sbn);
 			OPENSSL_free(beta);
+			OPENSSL_free(gbuf);
+			OPENSSL_free(hbuf);
+			OPENSSL_free(gxbuf);
 			OPENSSL_free(hxbuf);
+			OPENSSL_free(gkbuf);
+			OPENSSL_free(hkbuf);
 		}
 		EVP_DigestUpdate(md_ctx, hi, hi_len);
 		unsigned char *chash = OPENSSL_malloc(EVP_MD_size(md));
@@ -387,7 +490,7 @@ EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isi
 	}
 	else if(ec_keypair)
 	{
-		return 0; // TODO
+		return 0;
 	}
 	return ret;
 }
