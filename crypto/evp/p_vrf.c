@@ -363,7 +363,7 @@ err_paramlen:
 		EC_POINT_free(gamma);
 		EC_POINT_free(h);
 		BN_free(p);
-		return 0; // TODO
+		return ret;
 	}
 	return ret;
 }
@@ -381,9 +381,6 @@ EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isi
 		const BIGNUM *pubkey = BN_new();
 		DH_get0_key(dh_keypair, &pubkey, &privkey);
 		BIGNUM *h = hash_to_scalar(input, isize);
-		BIGNUM *gamma = BN_new();
-		BN_exp(gamma, h, privkey, bnctx);
-		BN_free(h); h=0;
 		const BIGNUM *p = BN_new();
 		const BIGNUM *q = BN_new();
 		const BIGNUM *g = BN_new();
@@ -485,12 +482,116 @@ EVP_VRFVerify(EVP_PKEY *pkey, EVP_MD *md, const unsigned char *input, size_t isi
 		OPENSSL_free(chash);
 		OPENSSL_free(hi);
 		EVP_MD_CTX_free(md_ctx);
-		BN_free(gamma);
 		BN_CTX_free(bnctx);
 	}
 	else if(ec_keypair)
 	{
-		return 0;
+		const EC_GROUP *curve = EC_KEY_get0_group(ec_keypair);
+		const EC_POINT *g = EC_GROUP_get0_generator(curve);
+		const EC_POINT *h = hash_to_point(curve, input, isize);
+		const EC_POINT *pubkey = EC_KEY_get0_public_key(ec_keypair);
+		BIGNUM *p = BN_new();
+		EC_GROUP_get_curve_GFp(curve, p, 0, 0, 0);
+		EVP_MD_CTX *md_ctx = EVP_MD_CTX_create();
+		EVP_DigestInit_ex(md_ctx, md, 0);
+		unsigned char *gbuf;
+		unsigned char *hbuf;
+		unsigned char *gxbuf;
+		unsigned char *hxbuf;
+		unsigned char *gkbuf;
+		unsigned char *hkbuf;
+		unsigned char *c;
+		size_t clen;
+		unsigned char *s;
+		size_t slen;
+		unsigned char *hi;
+		size_t hi_len;
+		{
+			
+			size_t gbuf_len = EC_POINT_point2buf(curve, g, 
+				POINT_CONVERSION_UNCOMPRESSED, &gbuf, bnctx);
+			size_t hbuf_len = EC_POINT_point2buf(curve, h, 
+				POINT_CONVERSION_UNCOMPRESSED, &hbuf, bnctx);
+			size_t gxbuf_len = EC_POINT_point2buf(curve, pubkey, 
+				POINT_CONVERSION_UNCOMPRESSED, &gxbuf, bnctx);
+
+			int curr_size = 0;
+			memcpy(&curr_size, proof, sizeof(int));
+			proof+=sizeof(int);
+			if(curr_size<256) return 0;
+			hxbuf = OPENSSL_malloc(curr_size);
+			memcpy(hxbuf, proof, curr_size);
+			size_t hxbuf_len = curr_size;
+			unsigned char *beta = malloc(curr_size);
+			memcpy(beta, hxbuf, curr_size);
+			beta = realloc(beta, 256);
+			if(memcmp(hash, beta, 256) != 0) return 0;
+			EC_POINT *hx = EC_POINT_new(curve);
+			EC_POINT_oct2point(curve, hx, hxbuf, curr_size, bnctx);
+			proof+=sizeof(curr_size);
+			memcpy(&curr_size, proof, sizeof(int));
+			proof+=sizeof(int);
+			clen = (size_t)((unsigned int)curr_size);
+			memcpy(&c, proof, curr_size);
+			proof+=curr_size;
+			memcpy(&curr_size, proof, sizeof(int));
+			proof+=sizeof(int);
+			slen = (size_t)((unsigned int)curr_size);
+			memcpy(&s, proof, curr_size);
+			BIGNUM *cbn = BN_new();
+			BIGNUM *sbn = BN_new();
+			BN_bin2bn(c, clen, cbn);
+			BN_bin2bn(s, slen, sbn);
+			EC_POINT *t[2];
+			t[0] = EC_POINT_new(curve);
+			t[1] = EC_POINT_new(curve);
+
+			EC_POINT *gk = EC_POINT_new(curve);
+			EC_POINT_mul(curve, t[0], 0, pubkey, cbn, bnctx);
+			EC_POINT_mul(curve, t[1], 0, g, sbn, bnctx);
+			EC_POINT_add(curve, gk, t[0], t[1], bnctx);
+			size_t gkbuf_len = EC_POINT_point2buf(curve, gk, POINT_CONVERSION_UNCOMPRESSED, &gkbuf, bnctx);
+			
+			EC_POINT *hk = EC_POINT_new(curve);
+			EC_POINT_mul(curve, t[0], 0, hx, cbn, bnctx);
+			EC_POINT_mul(curve, t[1], 0, h, sbn, bnctx);
+			EC_POINT_add(curve, hk, t[0], t[1], bnctx);
+			size_t hkbuf_len = EC_POINT_point2buf(curve, hk, POINT_CONVERSION_UNCOMPRESSED, &hkbuf, bnctx);
+
+		 	hi_len = bufcat(&hi, 6, gbuf, gbuf_len,
+									hbuf, hbuf_len,
+									gxbuf, gxbuf_len,
+								    hxbuf, hxbuf_len,
+									gkbuf, gkbuf_len,
+									hkbuf, hkbuf_len);
+			EC_POINT_clear_free(hx);
+			EC_POINT_clear_free(gk);
+			EC_POINT_clear_free(hx);
+			BN_free(cbn);
+			BN_free(sbn);
+			OPENSSL_free(beta);
+			OPENSSL_free(gbuf);
+			OPENSSL_free(hbuf);
+			OPENSSL_free(gxbuf);
+			OPENSSL_free(hxbuf);
+			OPENSSL_free(gkbuf);
+			OPENSSL_free(hkbuf);
+		}
+		EVP_DigestUpdate(md_ctx, hi, hi_len);
+		unsigned char *chash = OPENSSL_malloc(EVP_MD_size(md));
+		unsigned int chashlen;
+		EVP_DigestFinal_ex(md_ctx, chash, &chashlen);
+		ret &= memcmp(chash, c, chashlen) == 0;
+		 
+		
+		// Cleanup DH
+		OPENSSL_free(c);
+		OPENSSL_free(s);
+		OPENSSL_free(chash);
+		OPENSSL_free(hi);
+		EVP_MD_CTX_free(md_ctx);
+		BN_CTX_free(bnctx);
 	}
+		
 	return ret;
 }
