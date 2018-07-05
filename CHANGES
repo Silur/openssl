@@ -8,8 +8,42 @@
  release branch.
 
  Changes between 1.1.0h and 1.1.1 [xx XXX xxxx]
-  *) Add blinding to an ECDSA signature to protect against side channel attacks
-     discovered by Keegan Ryan (NCC Group).
+
+  *) Modified the random device based seed sources to keep the relevant
+     file descriptors open rather than reopening them on each access.
+     This allows such sources to operate in a chroot() jail without
+     the associated device nodes being available. This behaviour can be
+     controlled using RAND_keep_random_devices_open().
+     [Paul Dale]
+
+  *) Numerous side-channel attack mitigations have been applied. This may have
+     performance impacts for some algorithms for the benefit of improved
+     security. Specific changes are noted in this change log by their respective
+     authors.
+     [Matt Caswell]
+
+  *) AIX shared library support overhaul. Switch to AIX "natural" way of
+     handling shared libraries, which means collecting shared objects of
+     different versions and bitnesses in one common archive. This allows to
+     mitigate conflict between 1.0 and 1.1 side-by-side installations. It
+     doesn't affect the way 3rd party applications are linked, only how
+     multi-version installation is managed.
+     [Andy Polyakov]
+
+  *) Make ec_group_do_inverse_ord() more robust and available to other
+     EC cryptosystems, so that irrespective of BN_FLG_CONSTTIME, SCA
+     mitigations are applied to the fallback BN_mod_inverse().
+     When using this function rather than BN_mod_inverse() directly, new
+     EC cryptosystem implementations are then safer-by-default.
+     [Billy Bob Brumley]
+
+  *) Add coordinate blinding for EC_POINT and implement projective
+     coordinate blinding for generic prime curves as a countermeasure to
+     chosen point SCA attacks.
+     [Sohaib ul Hassan, Nicola Tuveri, Billy Bob Brumley]
+
+  *) Add blinding to ECDSA and DSA signatures to protect against side channel
+     attacks discovered by Keegan Ryan (NCC Group).
      [Matt Caswell]
 
   *) Enforce checking in the pkeyutl command line app to ensure that the input

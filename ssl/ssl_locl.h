@@ -1047,6 +1047,10 @@ struct ssl_ctx_st {
 
     /* The number of TLS1.3 tickets to automatically send */
     size_t num_tickets;
+
+    /* Callback to determine if early_data is acceptable or not */
+    SSL_allow_early_data_cb_fn allow_early_data_cb;
+    void *allow_early_data_cb_data;
 };
 
 struct ssl_st {
@@ -1205,6 +1209,7 @@ struct ssl_st {
 # endif
     SSL_psk_find_session_cb_func psk_find_session_cb;
     SSL_psk_use_session_cb_func psk_use_session_cb;
+
     SSL_CTX *ctx;
     /* Verified chain of peer */
     STACK_OF(X509) *verified_chain;
@@ -1424,6 +1429,10 @@ struct ssl_st {
     size_t sent_tickets;
     /* The next nonce value to use when we send a ticket on this connection */
     uint64_t next_ticket_nonce;
+
+    /* Callback to determine if early_data is acceptable or not */
+    SSL_allow_early_data_cb_fn allow_early_data_cb;
+    void *allow_early_data_cb_data;
 };
 
 /*
@@ -2212,6 +2221,8 @@ void ssl_cert_clear_certs(CERT *c);
 void ssl_cert_free(CERT *c);
 __owur int ssl_generate_session_id(SSL *s, SSL_SESSION *ss);
 __owur int ssl_get_new_session(SSL *s, int session);
+__owur SSL_SESSION *lookup_sess_in_cache(SSL *s, const unsigned char *sess_id,
+                                         size_t sess_id_len);
 __owur int ssl_get_prev_session(SSL *s, CLIENTHELLO_MSG *hello);
 __owur SSL_SESSION *ssl_session_dup(SSL_SESSION *src, int ticket);
 __owur int ssl_cipher_id_cmp(const SSL_CIPHER *a, const SSL_CIPHER *b);

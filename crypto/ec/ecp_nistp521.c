@@ -1658,7 +1658,9 @@ const EC_METHOD *EC_GFp_nistp521_method(void)
         ec_key_simple_generate_public_key,
         0, /* keycopy */
         0, /* keyfinish */
-        ecdh_simple_compute_key
+        ecdh_simple_compute_key,
+        0, /* field_inverse_mod_ord */
+        0  /* blind_coordinates */
     };
 
     return &ret;
@@ -1669,7 +1671,7 @@ const EC_METHOD *EC_GFp_nistp521_method(void)
  * FUNCTIONS TO MANAGE PRECOMPUTATION
  */
 
-static NISTP521_PRE_COMP *nistp521_pre_comp_new()
+static NISTP521_PRE_COMP *nistp521_pre_comp_new(void)
 {
     NISTP521_PRE_COMP *ret = OPENSSL_zalloc(sizeof(*ret));
 

@@ -11,6 +11,7 @@
 
 #include "internal/sm2.h"
 #include "internal/sm2err.h"
+#include "internal/ec_int.h" /* ec_group_do_inverse_ord() */
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
@@ -133,7 +134,7 @@ static ECDSA_SIG *sm2_sig_gen(const EC_KEY *key, const BIGNUM *e)
             continue;
 
         if (!BN_add(s, dA, BN_value_one())
-                || !BN_mod_inverse(s, s, order, ctx)
+                || !ec_group_do_inverse_ord(group, s, s, ctx)
                 || !BN_mod_mul(tmp, dA, r, order, ctx)
                 || !BN_sub(tmp, k, tmp)
                 || !BN_mod_mul(s, s, tmp, order, ctx)) {
@@ -282,18 +283,13 @@ int sm2_do_verify(const EC_KEY *key,
     return ret;
 }
 
-int sm2_sign(int type, const unsigned char *dgst, int dgstlen,
+int sm2_sign(const unsigned char *dgst, int dgstlen,
              unsigned char *sig, unsigned int *siglen, EC_KEY *eckey)
 {
     BIGNUM *e = NULL;
     ECDSA_SIG *s = NULL;
     int sigleni;
     int ret = -1;
-
-    if (type != NID_sm3 || dgstlen != 32) {
-       SM2err(SM2_F_SM2_SIGN, SM2_R_INVALID_DIGEST_TYPE);
-       goto done;
-   }
 
     e = BN_bin2bn(dgst, dgstlen, NULL);
     if (e == NULL) {
@@ -318,7 +314,7 @@ int sm2_sign(int type, const unsigned char *dgst, int dgstlen,
     return ret;
 }
 
-int sm2_verify(int type, const unsigned char *dgst, int dgstlen,
+int sm2_verify(const unsigned char *dgst, int dgstlen,
                const unsigned char *sig, int sig_len, EC_KEY *eckey)
 {
     ECDSA_SIG *s = NULL;
@@ -327,11 +323,6 @@ int sm2_verify(int type, const unsigned char *dgst, int dgstlen,
     unsigned char *der = NULL;
     int derlen = -1;
     int ret = -1;
-
-    if (type != NID_sm3) {
-       SM2err(SM2_F_SM2_VERIFY, SM2_R_INVALID_DIGEST_TYPE);
-       goto done;
-   }
 
     s = ECDSA_SIG_new();
     if (s == NULL) {

@@ -368,6 +368,12 @@ typedef int (*SSL_verify_cb)(int preverify_ok, X509_STORE_CTX *x509_ctx);
  */
 # define SSL_OP_TLS_ROLLBACK_BUG                         0x00800000U
 
+/*
+ * Switches off automatic TLSv1.3 anti-replay protection for early data. This
+ * is a server-side option only (no effect on the client).
+ */
+# define SSL_OP_NO_ANTI_REPLAY                           0x01000000U
+
 # define SSL_OP_NO_SSLv3                                 0x02000000U
 # define SSL_OP_NO_TLSv1                                 0x04000000U
 # define SSL_OP_NO_TLSv1_2                               0x08000000U
@@ -1079,8 +1085,8 @@ size_t SSL_get_peer_finished(const SSL *s, void *buf, size_t count);
 # define SSL_VERIFY_CLIENT_ONCE          0x04
 # define SSL_VERIFY_POST_HANDSHAKE       0x08
 
-# define OpenSSL_add_ssl_algorithms()    SSL_library_init()
 # if OPENSSL_API_COMPAT < 0x10100000L
+#  define OpenSSL_add_ssl_algorithms()   SSL_library_init()
 #  define SSLeay_add_ssl_algorithms()    SSL_library_init()
 # endif
 
@@ -2383,12 +2389,18 @@ int SSL_SESSION_get0_ticket_appdata(SSL_SESSION *ss, void **data, size_t *len);
 
 extern const char SSL_version_str[];
 
-
-
 typedef unsigned int (*DTLS_timer_cb)(SSL *s, unsigned int timer_us);
 
 void DTLS_set_timer_cb(SSL *s, DTLS_timer_cb cb);
 
+
+typedef int (*SSL_allow_early_data_cb_fn)(SSL *s, void *arg);
+void SSL_CTX_set_allow_early_data_cb(SSL_CTX *ctx,
+                                     SSL_allow_early_data_cb_fn cb,
+                                     void *arg);
+void SSL_set_allow_early_data_cb(SSL *s,
+                                 SSL_allow_early_data_cb_fn cb,
+                                 void *arg);
 
 # ifdef  __cplusplus
 }

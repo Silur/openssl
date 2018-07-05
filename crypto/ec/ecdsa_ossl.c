@@ -136,34 +136,10 @@ static int ecdsa_sign_setup(EC_KEY *eckey, BN_CTX *ctx_in,
     }
     while (BN_is_zero(r));
 
-    /* Check if optimized inverse is implemented */
-    if (EC_GROUP_do_inverse_ord(group, k, k, ctx) == 0) {
-        /* compute the inverse of k */
-        if (group->mont_data != NULL) {
-            /*
-             * We want inverse in constant time, therefore we utilize the fact
-             * order must be prime and use Fermats Little Theorem instead.
-             */
-            if (!BN_set_word(X, 2)) {
-                ECerr(EC_F_ECDSA_SIGN_SETUP, ERR_R_BN_LIB);
-                goto err;
-            }
-            if (!BN_mod_sub(X, order, X, order, ctx)) {
-                ECerr(EC_F_ECDSA_SIGN_SETUP, ERR_R_BN_LIB);
-                goto err;
-            }
-            BN_set_flags(X, BN_FLG_CONSTTIME);
-            if (!BN_mod_exp_mont_consttime(k, k, X, order, ctx,
-                                           group->mont_data)) {
-                ECerr(EC_F_ECDSA_SIGN_SETUP, ERR_R_BN_LIB);
-                goto err;
-            }
-        } else {
-            if (!BN_mod_inverse(k, k, order, ctx)) {
-                ECerr(EC_F_ECDSA_SIGN_SETUP, ERR_R_BN_LIB);
-                goto err;
-            }
-        }
+    /* compute the inverse of k */
+    if (!ec_group_do_inverse_ord(group, k, k, ctx)) {
+        ECerr(EC_F_ECDSA_SIGN_SETUP, ERR_R_BN_LIB);
+        goto err;
     }
 
     /* clear old values if necessary */
@@ -288,7 +264,7 @@ ECDSA_SIG *ossl_ecdsa_sign_sig(const unsigned char *dgst, int dgst_len,
          *
          * We will blind this to protect against side channel attacks
          *
-         *   s := k^-1 * blind^-1 * (blind * m + blind * r * priv_key) mod order
+         *   s := blind^-1 * k^-1 * (blind * m + blind * r * priv_key) mod order
          */
 
         /* Generate a blinding value */
@@ -323,18 +299,18 @@ ECDSA_SIG *ossl_ecdsa_sign_sig(const unsigned char *dgst, int dgst_len,
             goto err;
         }
 
+        /* s := s * k^-1 mod order */
+        if (!BN_mod_mul(s, s, ckinv, order, ctx)) {
+            ECerr(EC_F_OSSL_ECDSA_SIGN_SIG, ERR_R_BN_LIB);
+            goto err;
+        }
+
         /* s:= s * blind^-1 mod order */
         if (BN_mod_inverse(blind, blind, order, ctx) == NULL) {
             ECerr(EC_F_OSSL_ECDSA_SIGN_SIG, ERR_R_BN_LIB);
             goto err;
         }
         if (!BN_mod_mul(s, s, blind, order, ctx)) {
-            ECerr(EC_F_OSSL_ECDSA_SIGN_SIG, ERR_R_BN_LIB);
-            goto err;
-        }
-
-        /* s := s * k^-1 mod order */
-        if (!BN_mod_mul(s, s, ckinv, order, ctx)) {
             ECerr(EC_F_OSSL_ECDSA_SIGN_SIG, ERR_R_BN_LIB);
             goto err;
         }
@@ -360,7 +336,8 @@ ECDSA_SIG *ossl_ecdsa_sign_sig(const unsigned char *dgst, int dgst_len,
         ECDSA_SIG_free(ret);
         ret = NULL;
     }
-    BN_CTX_end(ctx);
+    if (ctx != NULL)
+        BN_CTX_end(ctx);
     BN_CTX_free(ctx);
     BN_clear_free(kinv);
     return ret;
@@ -449,12 +426,9 @@ int ossl_ecdsa_verify_sig(const unsigned char *dgst, int dgst_len,
         goto err;
     }
     /* calculate tmp1 = inv(S) mod order */
-    /* Check if optimized inverse is implemented */
-    if (EC_GROUP_do_inverse_ord(group, u2, sig->s, ctx) == 0) {
-        if (!BN_mod_inverse(u2, sig->s, order, ctx)) {
-            ECerr(EC_F_OSSL_ECDSA_VERIFY_SIG, ERR_R_BN_LIB);
-            goto err;
-        }
+    if (!ec_group_do_inverse_ord(group, u2, sig->s, ctx)) {
+        ECerr(EC_F_OSSL_ECDSA_VERIFY_SIG, ERR_R_BN_LIB);
+        goto err;
     }
     /* digest -> m */
     i = BN_num_bits(order);
